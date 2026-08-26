@@ -1,0 +1,63 @@
+# Build the MEAS image from this fork and push it to Artifact Registry.
+#
+# This exists only because of the GCS-via-ADC patch on feat/gcs-adc-storage
+# (see measinst/infra apps/learnhouse/40-image-ci-identity.sh for why). If that
+# patch lands upstream, delete this workflow and pull ghcr.io/learnhouse/app
+# instead.
+#
+# Named meas-* so it cannot collide with an upstream workflow when this fork
+# is rebased on a new release.
+name: MEAS image
+
+on:
+  push:
+    branches: [meas-main, feat/gcs-adc-storage]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (default: short SHA)"
+        required: false
+
+permissions:
+  contents: read
+  id-token: write        # required to mint the WIF token
+
+env:
+  REGISTRY: us-east1-docker.pkg.dev
+  IMAGE: us-east1-docker.pkg.dev/meas-inst-prod/containers/learnhouse
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Work out the tag
+        id: tag
+        run: echo "value=${{ inputs.tag || format('sha-{0}', github.sha) }}" >> "$GITHUB_OUTPUT"
+
+      # Direct Workload Identity Federation — no service-account key exists to
+      # leak, and org policy means one could not be minted even deliberately.
+      - uses: google-github-actions/auth@v3
+        id: auth
+        with:
+          workload_identity_provider: projects/588570914403/locations/global/workloadIdentityPools/github/providers/github-oidc
+          token_format: access_token
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.tag.outputs.value }}
+            ${{ env.IMAGE }}:meas-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
