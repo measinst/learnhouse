@@ -57,6 +57,55 @@ def _validate_local_path(file_path: str) -> Optional[str]:
     return full_real
 
 
+# --- Google Cloud Storage via Application Default Credentials -----------------
+
+_GCS_ENDPOINTS = ("storage.googleapis.com",)
+_gcs_credentials = None
+
+
+def _use_gcs_adc(endpoint_url: Optional[str]) -> bool:
+    """True when we should talk to GCS with ADC rather than SigV4 + HMAC.
+
+    Opt-out: set LEARNHOUSE_S3_FORCE_SIGV4=1 to keep using HMAC keys against
+    the GCS endpoint, which is still a supported configuration.
+    """
+    if not endpoint_url:
+        return False
+    if os.environ.get("LEARNHOUSE_S3_FORCE_SIGV4", "").lower() in ("1", "true", "yes"):
+        return False
+    return any(host in endpoint_url for host in _GCS_ENDPOINTS)
+
+
+def _gcs_access_token() -> str:
+    """A current OAuth token from ADC, refreshed when it expires."""
+    global _gcs_credentials
+    import google.auth
+    from google.auth.transport.requests import Request as GoogleAuthRequest
+
+    if _gcs_credentials is None:
+        _gcs_credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/devstorage.read_write"]
+        )
+    if not _gcs_credentials.valid:
+        _gcs_credentials.refresh(GoogleAuthRequest())
+    return _gcs_credentials.token
+
+
+def _gcs_adapt_request(request, **kwargs):
+    """Make a botocore request GCS-shaped: bearer auth, and its copy header.
+
+    GCS's XML API names the copy source `x-goog-copy-source`; botocore emits
+    the `x-amz-copy-source` spelling, which GCS rejects with InvalidArgument.
+    """
+    request.headers.add_header("Authorization", "Bearer " + _gcs_access_token())
+    source = request.headers.get("x-amz-copy-source")
+    if source:
+        del request.headers["x-amz-copy-source"]
+        request.headers.add_header(
+            "x-goog-copy-source", source if source.startswith("/") else "/" + source
+        )
+
+
 @functools.cache
 def get_content_delivery_type() -> str:
     """Get the configured content delivery type (cached — config doesn't change at runtime)."""
@@ -86,9 +135,50 @@ def get_storage_client():
         # Overridable via LEARNHOUSE_S3_API_REGION for real AWS S3 / MinIO, which
         # validate the region against the endpoint.
         region = os.environ.get("LEARNHOUSE_S3_API_REGION") or "auto"
+        endpoint = learnhouse_config.hosting_config.content_delivery.s3api.endpoint_url
+
+        # Google Cloud Storage: authenticate with Application Default
+        # Credentials instead of a static key pair.
+        #
+        # GCS speaks S3 through its interoperability endpoint, but SigV4 there
+        # requires an HMAC access-key pair — a long-lived static secret. On GKE
+        # (and anywhere else ADC is available) the platform already has a
+        # short-lived, automatically-rotated credential via Workload Identity,
+        # and the GCS XML API accepts it as a plain OAuth bearer token.
+        #
+        # So: sign nothing, and attach the bearer token per request. Every
+        # operation this codebase uses — get/put/head/list/delete/delete_objects
+        # — works unchanged. Only presigning cannot (it has no signature to
+        # presign with); generate_presigned_get_url already treats that as
+        # optional and callers stream through the API instead.
+        if _use_gcs_adc(endpoint):
+            _s3_client = boto3.client(
+                "s3",
+                endpoint_url=endpoint,
+                region_name=region,
+                config=botocore.config.Config(
+                    signature_version=botocore.UNSIGNED,
+                    s3={"addressing_style": "path"},
+                    # Recent botocore defaults to flexible checksums, which wrap
+                    # the body in aws-chunked framing. GCS does not unwrap it and
+                    # stores the framing verbatim, so every uploaded file comes
+                    # back with a length prefix, a trailing 0 and an
+                    # x-amz-checksum-crc32 line baked into its contents.
+                    # Silent, and only visible when you read a file back.
+                    request_checksum_calculation="when_required",
+                    response_checksum_validation="when_required",
+                    connect_timeout=10,
+                    read_timeout=60,
+                    retries={"max_attempts": 2},
+                ),
+            )
+            _s3_client.meta.events.register("request-created.s3.*", _gcs_adapt_request)
+            logging.info("S3 client: Google Cloud Storage via ADC (no static keys).")
+            return _s3_client
+
         _s3_client = boto3.client(
             "s3",
-            endpoint_url=learnhouse_config.hosting_config.content_delivery.s3api.endpoint_url,
+            endpoint_url=endpoint,
             region_name=region,
             config=botocore.config.Config(
                 signature_version="s3v4",
@@ -135,6 +225,14 @@ def generate_presigned_get_url(
 
     s3_client = get_storage_client()
     if not s3_client:
+        return None
+
+    # Under GCS+ADC there is no signing key, so botocore happily returns a URL
+    # with no signature on it — which 403s when the browser follows it. Returning
+    # None is the documented contract for "cannot presign", and callers fall back
+    # to streaming through the API, which works.
+    learnhouse_config = get_learnhouse_config()
+    if _use_gcs_adc(learnhouse_config.hosting_config.content_delivery.s3api.endpoint_url):
         return None
 
     try:
