@@ -127,11 +127,13 @@ async def upload_content(
         await asyncio.to_thread(ensure_faststart, safe_path)
 
     elif content_delivery == "s3api":
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=learnhouse_config.hosting_config.content_delivery.s3api.endpoint_url,
-            config=botocore.config.Config(connect_timeout=10, read_timeout=60, retries={"max_attempts": 2}),
-        )
+        # One factory for every S3 client in the codebase. It is what knows
+        # about GCS-via-ADC; a local boto3.client() here silently falls back to
+        # the default credential chain and fails with "Unable to locate
+        # credentials" on a deployment that has no static keys by design.
+        from src.services.courses.transfer.storage_utils import get_storage_client
+
+        s3 = get_storage_client()
 
         bucket_name = learnhouse_config.hosting_config.content_delivery.s3api.bucket_name or "learnhouse-media"
         local_path = safe_path
@@ -192,11 +194,13 @@ async def read_content(
     content_delivery = learnhouse_config.hosting_config.content_delivery.type
 
     if content_delivery == "s3api":
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=learnhouse_config.hosting_config.content_delivery.s3api.endpoint_url,
-            config=botocore.config.Config(connect_timeout=10, read_timeout=60, retries={"max_attempts": 2}),
-        )
+        # One factory for every S3 client in the codebase. It is what knows
+        # about GCS-via-ADC; a local boto3.client() here silently falls back to
+        # the default credential chain and fails with "Unable to locate
+        # credentials" on a deployment that has no static keys by design.
+        from src.services.courses.transfer.storage_utils import get_storage_client
+
+        s3 = get_storage_client()
         bucket_name = learnhouse_config.hosting_config.content_delivery.s3api.bucket_name or "learnhouse-media"
         s3_key = f"content/{type_of_dir}/{uuid}/{directory}/{file_and_format}"
         try:
