@@ -38,17 +38,23 @@ jobs:
 
       # Direct Workload Identity Federation — no service-account key exists to
       # leak, and org policy means one could not be minted even deliberately.
+      #
+      # No `service_account:` and no `token_format: access_token` here, and that
+      # pairing is deliberate: this estate grants the GitHub principal the
+      # Artifact Registry role directly, with no intermediary service account to
+      # impersonate (see infra clusters/meas-apps/41-github-deploy-identity.sh).
+      # `token_format: access_token` is implemented as SA impersonation and
+      # fails outright without one. So we take the federated credential and let
+      # gcloud's docker credential helper exchange it.
       - uses: google-github-actions/auth@v3
         id: auth
         with:
           workload_identity_provider: projects/588570914403/locations/global/workloadIdentityPools/github/providers/github-oidc
-          token_format: access_token
 
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.access_token }}
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Authorise Docker against Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
 
       - uses: docker/setup-buildx-action@v3
 
