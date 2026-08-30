@@ -28,10 +28,11 @@ env:
 
 jobs:
   build:
-    # arc-ubuntu: the measinst self-hosted scale set. Hosted runners stop at the
-    # org's $0 Actions budget. The image ships no docker CLI — buildx action
-    # brings its own.
-    runs-on: arc-ubuntu
+    # ubuntu-latest on purpose: this fork is a PUBLIC repo, so hosted minutes
+    # are free and the org's self-hosted runner group (which excludes public
+    # repositories by policy) never offers arc-ubuntu here — a job asking for it
+    # queues forever. The private measinst repos use arc-ubuntu instead.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
