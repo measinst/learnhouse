@@ -56,7 +56,7 @@ WEBHOOK_EVENTS: dict[str, dict] = {
         "description": "Triggered when a user completes an activity",
         "data_schema": {
             "user": {"user_uuid": "string", "email": "string", "username": "string"},
-            "activity": {"activity_uuid": "string", "activity_type": "string"},
+            "activity": {"activity_uuid": "string", "activity_type": "string", "activity_version": "integer"},
             "course": {"course_uuid": "string", "name": "string"},
         },
     },
@@ -95,7 +95,7 @@ WEBHOOK_EVENTS: dict[str, dict] = {
         "data_schema": {
             "user": {"user_uuid": "string", "email": "string", "username": "string"},
             "course": {"course_uuid": "string", "name": "string"},
-            "certificate": {"user_certification_uuid": "string"},
+            "certificate": {"user_certification_uuid": "string", "activity_versions": "object"},
         },
     },
     "certificate_revoked": {

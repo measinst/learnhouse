@@ -2786,6 +2786,7 @@ async def create_assignment_submission(
             user_id=user.id, # type: ignore
             creation_date=str(datetime.now()),
             update_date=str(datetime.now()),
+            data={"activity_version": activity.current_version or 1},
         )
         db_session.add(trailstep)
         await db_session.commit()
@@ -2795,9 +2796,11 @@ async def create_assignment_submission(
         # the student just hit "Try again" (the retry endpoint flipped it to
         # incomplete). Re-flip it to complete now that the assignment is
         # back in SUBMITTED state. The first-submission branch above sets
-        # complete=True; this keeps the reuse path consistent.
+        # complete=True; this keeps the reuse path consistent. A retry is a
+        # new completion against whatever version is current now.
         trailstep.complete = True
         trailstep.update_date = str(datetime.now())
+        trailstep.data = {**(trailstep.data or {}), "activity_version": activity.current_version or 1}
         db_session.add(trailstep)
         await db_session.commit()
         await db_session.refresh(trailstep)
