@@ -124,6 +124,9 @@ def shutdown_app(app: FastAPI) -> Callable:
         # Stop the daily nudge tick.
         from src.services.nudges.scheduler import stop_scheduler
         await stop_scheduler()
+        # Stop the learner refresher tick.
+        from src.services.refresher.scheduler import stop_scheduler as stop_refresher_scheduler
+        await stop_refresher_scheduler()
         # Stop the demo refresh tick.
         from src.services.demo.scheduler import stop_scheduler as stop_demo_scheduler
         await stop_demo_scheduler()
