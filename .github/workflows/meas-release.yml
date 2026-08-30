@@ -1,0 +1,51 @@
+# Release = re-tag a tested sha- image as v<VERSION> with crane. Never rebuilds.
+# Same mechanic as measinst/duropc and odoo-marketing (infra docs/image-releases.md).
+name: MEAS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha_tag:
+        description: "The sha-<8> tag to promote (built by 'MEAS image')"
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  IMAGE: us-east1-docker.pkg.dev/meas-inst-prod/containers/learnhouse
+
+jobs:
+  release:
+    runs-on: arc-ubuntu
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate the input and read VERSION
+        id: v
+        # The input reaches the shell through an env var, never via ${{ }}
+        # inside `run:` — interpolation happens before the regex check, so a
+        # crafted input could otherwise break out of the quotes.
+        env:
+          SHA_TAG: ${{ inputs.sha_tag }}
+        run: |
+          [[ "$SHA_TAG" =~ ^sha-[0-9a-f]{8}$ ]] || { echo "sha_tag must be sha-<8>"; exit 1; }
+          v="$(tr -d '[:space:]' < VERSION)"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "VERSION must be X.Y.Z"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/588570914403/locations/global/workloadIdentityPools/github/providers/github-oidc
+      - uses: google-github-actions/setup-gcloud@v3
+      - uses: imjasonh/setup-crane@v0.4
+      - name: Re-tag and git-tag
+        env:
+          SHA_TAG: ${{ inputs.sha_tag }}
+          VERSION_TAG: v${{ steps.v.outputs.version }}
+        run: |
+          gcloud auth print-access-token | crane auth login -u oauth2accesstoken --password-stdin us-east1-docker.pkg.dev
+          crane tag "${IMAGE}:${SHA_TAG}" "${VERSION_TAG}"
+          # The revision label is set by meas-image.yml; an image built some
+          # other way may carry no labels at all, so fall back to HEAD.
+          rev="$(crane config "${IMAGE}:${SHA_TAG}" | python3 -c 'import json,sys; print(((json.load(sys.stdin).get("config") or {}).get("Labels") or {}).get("org.opencontainers.image.revision",""))')"
+          git tag "${VERSION_TAG}" "${rev:-HEAD}" && git push origin "${VERSION_TAG}"

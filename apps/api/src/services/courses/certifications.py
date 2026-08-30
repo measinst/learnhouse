@@ -318,7 +318,22 @@ async def create_certificate_user(
             status_code=404,
             detail="User not found",
         )
-    
+
+    # Snapshot the per-activity content versions this learner completed on
+    # (TrailStep.data.activity_version, pinned at completion). Only completed
+    # steps count — an in-progress step's pin is not a completion. Older steps
+    # written before versions were pinned simply have no entry.
+    steps_stmt = select(TrailStep).where(
+        TrailStep.user_id == user_id,
+        TrailStep.course_id == certification.course_id,
+        TrailStep.complete == True,  # noqa: E712 - SQL expression, not a Python comparison
+    )
+    activity_versions: dict[str, int] = {}
+    for step in (await db_session.execute(steps_stmt)).scalars().all():
+        v = (step.data or {}).get("activity_version")
+        if v:
+            activity_versions[str(step.activity_id)] = v
+
     # Extract last 4 characters from user_uuid for uniqueness (since all start with "user_")
     user_uuid_short = user.user_uuid[-4:] if user.user_uuid else "USER"
     
@@ -383,6 +398,9 @@ async def create_certificate_user(
                 metadata={
                     "course_uuid": course.course_uuid,
                     "course_name": course.name,
+                    # Which content version each activity was completed on — the
+                    # certificate's version of record (content is versioned per save).
+                    "activity_versions": activity_versions,
                 },
             )
             await dispatch_webhooks(
@@ -400,6 +418,7 @@ async def create_certificate_user(
                     },
                     "certificate": {
                         "user_certification_uuid": certificate_user.user_certification_uuid,
+                        "activity_versions": activity_versions,
                     },
                 },
             )

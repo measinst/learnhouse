@@ -74,6 +74,12 @@ def startup_app(app: FastAPI) -> Callable:
         from src.services.nudges.scheduler import start_scheduler
         start_scheduler()
 
+        # Learner refresher: N days after a certificate, ask two recall
+        # questions. Per-course config on the course; no-op unless
+        # LEARNHOUSE_REFRESHER_ENABLED; never raises.
+        from src.services.refresher.scheduler import start_scheduler as start_refresher_scheduler
+        start_refresher_scheduler()
+
         # The shared demo organization refreshes itself on an interval, so the
         # feature needs no external scheduler. No-op unless
         # LEARNHOUSE_DEMO_ENABLED; never raises.
@@ -118,6 +124,9 @@ def shutdown_app(app: FastAPI) -> Callable:
         # Stop the daily nudge tick.
         from src.services.nudges.scheduler import stop_scheduler
         await stop_scheduler()
+        # Stop the learner refresher tick.
+        from src.services.refresher.scheduler import stop_scheduler as stop_refresher_scheduler
+        await stop_refresher_scheduler()
         # Stop the demo refresh tick.
         from src.services.demo.scheduler import stop_scheduler as stop_demo_scheduler
         await stop_demo_scheduler()

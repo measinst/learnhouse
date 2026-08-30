@@ -242,7 +242,10 @@ class TestTrailService:
         assert mock_track.await_count == 2
         assert mock_webhooks.await_count == 2
         assert (await db.execute(TrailRun.__table__.select())).all()
-        assert (await db.execute(TrailStep.__table__.select())).all()
+        steps = (await db.execute(TrailStep.__table__.select())).all()
+        assert steps
+        # The completion is pinned to the content version that was current.
+        assert first.runs[0].steps[0].data.get("activity_version") == (activity.current_version or 1)
 
     @pytest.mark.asyncio
     async def test_add_activity_to_trail_rejects_missing_activity_and_course(

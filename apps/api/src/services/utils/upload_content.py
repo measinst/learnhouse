@@ -1,8 +1,8 @@
 import asyncio
 import logging
 from typing import Literal, Optional
-import boto3
-import botocore.config
+import boto3  # noqa: F401 — tests patch this module's boto3/botocore at import site
+import botocore.config  # noqa: F401 — tests patch this module's boto3/botocore at import site
 from botocore.exceptions import BotoCoreError, ClientError
 import os
 from fastapi import HTTPException, UploadFile

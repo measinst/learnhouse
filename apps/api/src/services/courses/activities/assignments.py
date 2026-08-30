@@ -2786,6 +2786,7 @@ async def create_assignment_submission(
             user_id=user.id, # type: ignore
             creation_date=str(datetime.now()),
             update_date=str(datetime.now()),
+            data={"activity_version": activity.current_version or 1},
         )
         db_session.add(trailstep)
         await db_session.commit()
@@ -2795,9 +2796,11 @@ async def create_assignment_submission(
         # the student just hit "Try again" (the retry endpoint flipped it to
         # incomplete). Re-flip it to complete now that the assignment is
         # back in SUBMITTED state. The first-submission branch above sets
-        # complete=True; this keeps the reuse path consistent.
+        # complete=True; this keeps the reuse path consistent. A retry is a
+        # new completion against whatever version is current now.
         trailstep.complete = True
         trailstep.update_date = str(datetime.now())
+        trailstep.data = {**(trailstep.data or {}), "activity_version": activity.current_version or 1}
         db_session.add(trailstep)
         await db_session.commit()
         await db_session.refresh(trailstep)
@@ -2836,6 +2839,8 @@ async def create_assignment_submission(
             # Ensure trailstep reflects completion (create_assignment_submission
             # above already created it with complete=True, but if one already
             # existed from a previous state we make sure it's marked done).
+            # Both branches above already pinned data.activity_version on this
+            # same object, so there is nothing to re-pin here.
             trailstep.complete = True
             trailstep.update_date = str(datetime.now())
             db_session.add(trailstep)
@@ -3855,9 +3860,12 @@ async def mark_activity_as_done_for_user(
             detail="User not enrolled in the course",
         )
 
-    # Mark activity as done
+    # Mark activity as done. An instructor override is still a completion, so
+    # it pins the content version the same way a learner's own completion does
+    # (the certificate snapshot reads TrailStep.data.activity_version).
     trailstep.complete = True
     trailstep.update_date = str(datetime.now())
+    trailstep.data = {**(trailstep.data or {}), "activity_version": activity.current_version or 1}
 
     # Insert TrailStep in DB
     db_session.add(trailstep)

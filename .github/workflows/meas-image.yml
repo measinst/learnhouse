@@ -28,13 +28,19 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # arc-ubuntu: the measinst self-hosted scale set. Hosted runners stop at the
+    # org's $0 Actions budget. The image ships no docker CLI — buildx action
+    # brings its own.
+    runs-on: arc-ubuntu
     steps:
       - uses: actions/checkout@v5
 
       - name: Work out the tag
         id: tag
-        run: echo "value=${{ inputs.tag || format('sha-{0}', github.sha) }}" >> "$GITHUB_OUTPUT"
+        # sha-<8>, never the full sha or 7 chars: the estate's registry cleanup
+        # policies and deploy validation key on this exact shape
+        # (measinst/infra docs/image-releases.md).
+        run: echo "value=${{ inputs.tag || format('sha-{0}', github.sha) }}" | sed -E 's/sha-([0-9a-f]{8})[0-9a-f]*/sha-\1/' >> "$GITHUB_OUTPUT"
 
       # Direct Workload Identity Federation — no service-account key exists to
       # leak, and org policy means one could not be minted even deliberately.
@@ -62,8 +68,9 @@ jobs:
         with:
           context: .
           push: true
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
           tags: |
             ${{ env.IMAGE }}:${{ steps.tag.outputs.value }}
-            ${{ env.IMAGE }}:meas-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

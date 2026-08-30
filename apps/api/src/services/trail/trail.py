@@ -93,7 +93,7 @@ async def _build_trail_read(
         for step in steps_by_run.get(tr.id, []):
             db_session.expunge(step)
             step_course = course_map.get(step.course_id)
-            step.data = {"course": step_course.model_dump() if step_course else None}
+            step.data = {**(step.data or {}), "course": step_course.model_dump() if step_course else None}
             run.steps.append(step)
 
         trail_runs.append(run)
@@ -291,6 +291,10 @@ async def add_activity_to_trail(
             user_id=user.id,
             creation_date=str(datetime.now()),
             update_date=str(datetime.now()),
+            # Pin the content version the learner actually completed. Activity
+            # content is versioned per save; without this, a completion cannot
+            # be tied to what was on the page at the time.
+            data={"activity_version": activity.current_version or 1},
         )
         db_session.add(trailstep)
         await db_session.commit()
@@ -317,6 +321,7 @@ async def add_activity_to_trail(
                 "course_uuid": course.course_uuid,
                 "course_name": course.name,
                 "activity_type": activity.activity_type or "",
+                "activity_version": activity.current_version or 1,
             },
         )
         await dispatch_webhooks(
@@ -324,7 +329,7 @@ async def add_activity_to_trail(
             org_id=course.org_id,
             data={
                 "user": {"user_uuid": user.user_uuid, "email": user.email, "username": user.username},
-                "activity": {"activity_uuid": activity_uuid, "activity_type": activity.activity_type or ""},
+                "activity": {"activity_uuid": activity_uuid, "activity_type": activity.activity_type or "", "activity_version": activity.current_version or 1},
                 "course": {"course_uuid": course.course_uuid, "name": course.name},
             },
         )

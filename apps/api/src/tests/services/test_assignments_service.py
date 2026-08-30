@@ -1178,6 +1178,10 @@ class TestMarkActivityAsDoneForUser:
                 db,
             )
         assert result["message"] == "Activity marked as done for user"
+        # An instructor override is a completion too: it pins the version.
+        await db.refresh(step)
+        assert step.complete is True
+        assert step.data.get("activity_version") == (activity.current_version or 1)
         await db.refresh(step)
         assert step.complete is True
 
@@ -1684,6 +1688,35 @@ class TestCreateAssignmentSubmission:
                 db,
             )
         assert result.submission_status == AssignmentUserSubmissionStatus.SUBMITTED
+
+    async def test_retry_resubmit_repins_the_current_version(
+        self, mock_request, db, org, course, activity, assignment, admin_user
+    ):
+        """After "Try again" the step is re-flipped to complete; that is a new
+        completion against whatever content is current NOW, so the pinned
+        version moves with it — and unrelated keys in data survive."""
+        trail, _, step = await _make_trail(
+            db, org.id, course.id, activity.id, admin_user.id
+        )
+        step.data = {"activity_version": 1, "note": "kept"}
+        db.add(step)
+        activity.current_version = 3
+        db.add(activity)
+        await db.commit()
+
+        with patch(_PATCH_RBAC, new_callable=AsyncMock), \
+             patch(_PATCH_TRAIL_PRESENCE, new_callable=AsyncMock, return_value=trail), \
+             patch(_PATCH_CERT, new_callable=AsyncMock), \
+             patch(_PATCH_CERT_CHECK, new_callable=AsyncMock), \
+             patch(_PATCH_TRACK, new_callable=AsyncMock), \
+             patch(_PATCH_DISPATCH, new_callable=AsyncMock):
+            await create_assignment_submission(
+                mock_request, assignment.assignment_uuid, admin_user, db
+            )
+
+        await db.refresh(step)
+        assert step.complete is True
+        assert step.data == {"activity_version": 3, "note": "kept"}
 
     async def test_auto_grading_path(
         self, mock_request, db, admin_user, assignment, course, activity, assignment_task
