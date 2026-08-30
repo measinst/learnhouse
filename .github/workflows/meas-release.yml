@@ -18,7 +18,9 @@ env:
 
 jobs:
   release:
-    runs-on: arc-ubuntu
+    # ubuntu-latest: public fork — hosted minutes are free and the self-hosted
+    # runner group excludes public repositories (see meas-image.yml).
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - name: Validate the input and read VERSION
