@@ -1,8 +1,6 @@
 import asyncio
 import logging
 from typing import Literal, Optional
-import boto3
-import botocore.config
 from botocore.exceptions import BotoCoreError, ClientError
 import os
 from fastapi import HTTPException, UploadFile
