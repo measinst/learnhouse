@@ -23,8 +23,13 @@ jobs:
       - uses: actions/checkout@v5
       - name: Validate the input and read VERSION
         id: v
+        # The input reaches the shell through an env var, never via ${{ }}
+        # inside `run:` — interpolation happens before the regex check, so a
+        # crafted input could otherwise break out of the quotes.
+        env:
+          SHA_TAG: ${{ inputs.sha_tag }}
         run: |
-          [[ "${{ inputs.sha_tag }}" =~ ^sha-[0-9a-f]{8}$ ]] || { echo "sha_tag must be sha-<8>"; exit 1; }
+          [[ "$SHA_TAG" =~ ^sha-[0-9a-f]{8}$ ]] || { echo "sha_tag must be sha-<8>"; exit 1; }
           v="$(tr -d '[:space:]' < VERSION)"
           [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "VERSION must be X.Y.Z"; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
@@ -34,8 +39,13 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v3
       - uses: imjasonh/setup-crane@v0.4
       - name: Re-tag and git-tag
+        env:
+          SHA_TAG: ${{ inputs.sha_tag }}
+          VERSION_TAG: v${{ steps.v.outputs.version }}
         run: |
           gcloud auth print-access-token | crane auth login -u oauth2accesstoken --password-stdin us-east1-docker.pkg.dev
-          crane tag "${IMAGE}:${{ inputs.sha_tag }}" "v${{ steps.v.outputs.version }}"
-          rev="$(crane config "${IMAGE}:${{ inputs.sha_tag }}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["Labels"].get("org.opencontainers.image.revision",""))')"
-          git tag "v${{ steps.v.outputs.version }}" "${rev:-HEAD}" && git push origin "v${{ steps.v.outputs.version }}"
+          crane tag "${IMAGE}:${SHA_TAG}" "${VERSION_TAG}"
+          # The revision label is set by meas-image.yml; an image built some
+          # other way may carry no labels at all, so fall back to HEAD.
+          rev="$(crane config "${IMAGE}:${SHA_TAG}" | python3 -c 'import json,sys; print(((json.load(sys.stdin).get("config") or {}).get("Labels") or {}).get("org.opencontainers.image.revision",""))')"
+          git tag "${VERSION_TAG}" "${rev:-HEAD}" && git push origin "${VERSION_TAG}"
