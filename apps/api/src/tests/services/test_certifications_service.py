@@ -688,6 +688,62 @@ class TestCreateCertificateUser:
         )
 
     @pytest.mark.asyncio
+    async def test_create_certificate_user_snapshots_completed_activity_versions(
+        self, db, course, org, admin_user, regular_user, activity, mock_request
+    ):
+        """The award records which content version each activity was completed
+        on (from TrailStep.data), in both the audit metadata and the webhook.
+        Incomplete steps and steps without a pin contribute nothing."""
+        certification = await _create_certification(db, course, cert_uuid="cert_versions")
+        trail = Trail(
+            org_id=org.id, user_id=regular_user.id, trail_uuid="trail_versions",
+            creation_date=str(datetime.now()), update_date=str(datetime.now()),
+        )
+        db.add(trail)
+        await db.commit()
+        await db.refresh(trail)
+        run = TrailRun(
+            trail_id=trail.id, course_id=course.id, org_id=org.id, user_id=regular_user.id,
+            creation_date=str(datetime.now()), update_date=str(datetime.now()),
+        )
+        db.add(run)
+        await db.commit()
+        await db.refresh(run)
+
+        def _step(activity_id, complete, data):
+            return TrailStep(
+                complete=complete, teacher_verified=False, grade="", data=data,
+                trailrun_id=run.id, trail_id=trail.id, activity_id=activity_id,
+                course_id=course.id, org_id=org.id, user_id=regular_user.id,
+                creation_date=str(datetime.now()), update_date=str(datetime.now()),
+            )
+
+        db.add(_step(activity.id, True, {"activity_version": 4}))
+        db.add(_step(activity.id + 1, False, {"activity_version": 2}))  # in progress
+        db.add(_step(activity.id + 2, True, {}))  # pre-pinning step
+        await db.commit()
+
+        with patch(
+            "src.services.courses.certifications.check_resource_access",
+            new_callable=AsyncMock,
+        ), patch(
+            "src.services.courses.certifications.track", new_callable=AsyncMock
+        ), patch(
+            "src.services.courses.certifications.record_audit_event",
+            new_callable=AsyncMock,
+        ) as mock_audit, patch(
+            "src.services.courses.certifications.dispatch_webhooks",
+            new_callable=AsyncMock,
+        ) as mock_webhooks:
+            await create_certificate_user(
+                mock_request, regular_user.id, certification.id, db, current_user=admin_user
+            )
+
+        expected = {str(activity.id): 4}
+        assert mock_audit.await_args.kwargs["metadata"]["activity_versions"] == expected
+        assert mock_webhooks.await_args.kwargs["data"]["certificate"]["activity_versions"] == expected
+
+    @pytest.mark.asyncio
     async def test_create_certificate_user_duplicate(
         self, db, course, admin_user, regular_user, mock_request
     ):
