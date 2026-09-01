@@ -622,6 +622,81 @@ class TestAuthRouter:
         # Rejected outright rather than signed in with no organization.
         sign_with_google.assert_not_awaited()
 
+    async def test_oauth_invite_only_auto_join_domain_passes_gate(
+        self, client, db, org, monkeypatch
+    ):
+        """LEARNHOUSE_OAUTH_AUTO_JOIN_DOMAINS: a Google-verified email whose
+        domain is allowlisted joins an invite-only org with no invite at all —
+        and without touching Redis, so an invite-store outage cannot lock staff
+        out. The domain is matched against the PROVIDER-verified email (mixed
+        case here), never body.email."""
+        await _set_org_signup_mode(db, org.id, "inviteOnly")
+        monkeypatch.setenv(
+            "LEARNHOUSE_OAUTH_AUTO_JOIN_DOMAINS", " @Meas-Inst.com , duropc.com "
+        )
+        with patch(
+            "src.routers.auth.get_google_user_info",
+            new_callable=AsyncMock,
+            return_value={"email": "Staff@MEAS-INST.com", "email_verified": True},
+        ), patch(
+            "redis.Redis.from_url",
+            side_effect=AssertionError("auto-join must not consult Redis"),
+        ), patch(
+            "src.routers.auth.signWithGoogle",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as sign_with_google:
+            response = await client.post(
+                "/api/v1/auth/oauth",
+                params={"org_id": 1},
+                json={
+                    "email": "attacker-controlled@elsewhere.com",
+                    "provider": "google",
+                    "access_token": "google-token",
+                },
+            )
+        # Past the invite gate: the 401 comes from the mocked signWithGoogle
+        # returning None, not from the 403 refusal — and org_id survived.
+        assert response.status_code == 401
+        sign_with_google.assert_awaited_once()
+        assert sign_with_google.await_args.args[3] == org.id
+
+    async def test_oauth_auto_join_domain_mismatch_still_403(
+        self, client, db, org, monkeypatch
+    ):
+        """An allowlist that does not contain the verified email's domain
+        changes nothing: the invite gate refuses exactly as before. body.email
+        being allowlisted must not help — only the Google-verified address
+        counts."""
+        await _set_org_signup_mode(db, org.id, "inviteOnly")
+        monkeypatch.setenv("LEARNHOUSE_OAUTH_AUTO_JOIN_DOMAINS", "meas-inst.com")
+        mock_redis = Mock(get=Mock(return_value=None), close=Mock())
+        mock_config = SimpleNamespace(
+            redis_config=SimpleNamespace(redis_connection_string="redis://localhost:6379")
+        )
+        with patch(
+            "src.routers.auth.get_learnhouse_config", return_value=mock_config
+        ), patch("redis.Redis.from_url", return_value=mock_redis), patch(
+            "src.routers.auth.get_google_user_info",
+            new_callable=AsyncMock,
+            return_value={"email": "user@gmail.com", "email_verified": True},
+        ), patch(
+            "src.routers.auth.signWithGoogle",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as sign_with_google:
+            response = await client.post(
+                "/api/v1/auth/oauth",
+                params={"org_id": 1},
+                json={
+                    "email": "spoof@meas-inst.com",
+                    "provider": "google",
+                    "access_token": "google-token",
+                },
+            )
+        assert response.status_code == 403
+        sign_with_google.assert_not_awaited()
+
     async def test_oauth_invite_only_org_redis_unavailable_returns_503(self, client, db, org):
         await _set_org_signup_mode(db, org.id, "inviteOnly")
         mock_config = SimpleNamespace(
