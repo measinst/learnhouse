@@ -621,6 +621,27 @@ class ThirdPartyLogin(BaseModel):
     access_token: str
 
 
+def _oauth_auto_join_domains() -> set[str]:
+    """Email domains that may join an invite-only org through OAuth without an
+    invite, from ``LEARNHOUSE_OAUTH_AUTO_JOIN_DOMAINS`` (comma-separated,
+    case-insensitive, a leading ``@`` tolerated). Empty by default: the
+    feature is opt-in, and absence of the variable changes nothing.
+
+    Deployment-level rather than org-level on purpose: the check runs against
+    the OAuth provider's *verified* email, so it expresses "accounts our
+    identity provider vouches for are staff" — a property of the deployment's
+    identity setup rather than of any one org's join policy. An org-config
+    surface would be the natural upstream evolution (see UPSTREAM.md).
+    """
+    import os
+
+    return {
+        d.strip().lower().lstrip("@")
+        for d in os.environ.get("LEARNHOUSE_OAUTH_AUTO_JOIN_DOMAINS", "").split(",")
+        if d.strip()
+    }
+
+
 @router.post(
     "/oauth",
     summary="Log in via third-party provider",
@@ -740,7 +761,26 @@ async def third_party_login(
             if _existing_member:
                 _authorized = True
 
-            # 1. An invite code carried through the OAuth redirect, same code the
+            # 1. Or the account's domain is in the deployment's auto-join
+            #    allowlist (LEARNHOUSE_OAUTH_AUTO_JOIN_DOMAINS): staff whose
+            #    identity provider vouches for them join without an invite.
+            #
+            #    SECURITY: this deliberately reuses _invite_email, which for
+            #    Google is the PROVIDER-verified address resolved above — never
+            #    body.email, which the caller controls. A non-Google provider
+            #    would fall through to body.email, so the branch is gated on
+            #    the provider too; extend it only alongside equivalent
+            #    verified-email handling for that provider.
+            #
+            #    Checked before the invite paths because it needs no I/O — a
+            #    staff sign-in never touches Redis, so an invite-store outage
+            #    (the 503 below) cannot lock staff out.
+            if not _authorized and body.provider == "google":
+                _auto_domains = _oauth_auto_join_domains()
+                if _auto_domains and _invite_email.rsplit("@", 1)[-1] in _auto_domains:
+                    _authorized = True
+
+            # 2. An invite code carried through the OAuth redirect, same code the
             #    form signup would have posted to /users/{org_id}/invite/{code}.
             if invite_code:
                 try:
@@ -753,7 +793,7 @@ async def third_party_login(
                     _authorized = True
                     _invite_usergroup_id = _code_data.get("usergroup_id")
 
-            # 2. Or a pending invite sent to this address from the org dashboard.
+            # 3. Or a pending invite sent to this address from the org dashboard.
             if not _authorized:
                 _r = None
                 try:
