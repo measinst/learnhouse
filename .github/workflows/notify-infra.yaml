@@ -31,8 +31,11 @@ jobs:
     #             repo; build-community.yaml still builds the image for them.
     #
     # `closed` always dispatches, so teardown is never skipped.
+    # Forks without an infrastructure receiver must not attempt an empty
+    # dispatch. MEAS builds its image through meas-image.yml instead.
     if: >-
-      github.event_name != 'pull_request' ||
+      vars.INFRA_REPO != '' &&
+      (github.event_name != 'pull_request' ||
       (
         github.event.pull_request.head.repo.full_name == github.repository &&
         (
@@ -42,7 +45,7 @@ jobs:
             !endsWith(github.event.pull_request.user.login, '[bot]')
           )
         )
-      )
+      ))
     steps:
       - name: Send repository dispatch
         uses: peter-evans/repository-dispatch@v4
