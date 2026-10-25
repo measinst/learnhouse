@@ -1,0 +1,19 @@
+name: MEAS Node runtime check
+on:
+  pull_request:
+    paths: [Dockerfile, .github/workflows/meas-runtime-check.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build the Python and Node runtime used by the final image
+        run: docker build --pull --platform linux/amd64 --target python-node-runtime -t learnhouse-runtime-check .
+      - name: Verify patched Node, npm, Python and Brotli round trip offline
+        run: |
+          docker run --rm --network none learnhouse-runtime-check node -e 'const a=require("node:assert/strict"),z=require("node:zlib");a.equal(process.version,"v22.23.4");const b=Buffer.from("LearnHouse runtime smoke");a.deepEqual(z.brotliDecompressSync(z.brotliCompressSync(b)),b)'
+          docker run --rm --network none learnhouse-runtime-check npm --version
+          docker run --rm --network none learnhouse-runtime-check python --version

@@ -67,13 +67,27 @@ RUN bun run build
 # ───────────────────────────────────────────────
 # Stage 5: Final image combining frontend + backend + collab
 # ───────────────────────────────────────────────
-FROM python:3.14.6-slim-bookworm AS runner
+# MEASU-115: use the official patched runtime rather than an unbounded
+# NodeSource install whose cached layer can retain vulnerable Node releases.
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS node-runtime
+
+FROM python:3.14.6-slim-bookworm AS python-node-runtime
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && test "$(node --version)" = "v22.23.4" \
+    && npm --version
+
+FROM python-node-runtime AS runner
 
 # Single apt layer: nginx, curl, netcat, node, pm2
 RUN apt-get update \
     && apt-get install -y --no-install-recommends nginx curl netcat-openbsd ca-certificates gnupg unzip build-essential \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
     && npm install -g pm2 \
     && curl -fsSL https://bun.sh/install | bash \
     && apt-get purge -y gnupg \
