@@ -86,17 +86,17 @@ jobs:
             LEARNHOUSE_PUBLIC=true
           cache-from: type=gha,scope=${{ steps.prep.outputs.platform_pair }}
           cache-to: type=gha,mode=max,scope=${{ steps.prep.outputs.platform_pair }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'push' }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name == 'push' && github.repository == 'learnhouse/learnhouse' }}
 
       - name: Export digest
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.repository == 'learnhouse/learnhouse'
         run: |
           mkdir -p ${{ runner.temp }}/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "${{ runner.temp }}/digests/${digest#sha256:}"
 
       - name: Upload digest
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && github.repository == 'learnhouse/learnhouse'
         uses: actions/upload-artifact@v7
         with:
           name: digests-${{ steps.prep.outputs.platform_pair }}
@@ -134,7 +134,7 @@ jobs:
   merge:
     name: Create multi-platform manifest
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.repository == 'learnhouse/learnhouse'
     needs: build
     steps:
       - name: Download digests
